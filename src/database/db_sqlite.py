@@ -190,6 +190,117 @@ def get_all_subjects(teacher_id):
     conn.close()
     return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
 
-# Initialize DB on import
-if not DB_PATH.exists():
-    init_db()
+def get_all_subjects():
+    """Get all subjects in the database"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, teacher_id, subject_name, subject_code, join_code FROM subjects")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+
+def get_teacher_subjects(teacher_id):
+    """Get all subjects for a teacher"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, teacher_id, subject_name, subject_code, join_code FROM subjects WHERE teacher_id = ?", (teacher_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+
+def create_subject(subject_code, name, section, teacher_id):
+    """Create new subject"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO subjects (teacher_id, subject_name, subject_code, join_code) VALUES (?, ?, ?, ?)",
+            (teacher_id, name, subject_code, subject_code)
+        )
+        conn.commit()
+        subject_id = cursor.lastrowid
+        conn.close()
+        return [{"id": subject_id, "subject_code": subject_code, "name": name}]
+    except sqlite3.IntegrityError:
+        conn.close()
+        return []
+
+def enroll_student_to_subject(student_id, subject_id):
+    """Enroll a student to a subject"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO enrollments (student_id, subject_id) VALUES (?, ?)",
+            (student_id, subject_id)
+        )
+        conn.commit()
+        conn.close()
+        return [{"student_id": student_id, "subject_id": subject_id}]
+    except sqlite3.IntegrityError:
+        conn.close()
+        return []
+
+def unenroll_student_to_subject(student_id, subject_id):
+    """Unenroll a student from a subject"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM enrollments WHERE student_id = ? AND subject_id = ?", (student_id, subject_id))
+    conn.commit()
+    conn.close()
+    return []
+
+def get_student_subjects(student_id):
+    """Get all subjects for a student"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.id, s.teacher_id, s.subject_name, s.subject_code, s.join_code
+        FROM enrollments e
+        JOIN subjects s ON e.subject_id = s.id
+        WHERE e.student_id = ?
+    """, (student_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+
+def get_student_attendance(student_id):
+    """Get attendance records for a student"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT a.id, a.subject_id, a.attendance_date, a.status, s.subject_name
+        FROM attendance a
+        JOIN subjects s ON a.subject_id = s.id
+        WHERE a.student_id = ?
+    """, (student_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"id": r[0], "subject_id": r[1], "attendance_date": r[2], "status": r[3], "subject_name": r[4]} for r in rows]
+
+def create_attendance(logs):
+    """Create attendance records"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    for log in logs:
+        cursor.execute(
+            "INSERT INTO attendance (subject_id, student_id, attendance_date, status) VALUES (?, ?, ?, ?)",
+            (log.get("subject_id"), log.get("student_id"), log.get("attendance_date"), log.get("status", "present"))
+        )
+    conn.commit()
+    conn.close()
+    return logs
+
+def get_attendance_for_teacher(teacher_id):
+    """Get all attendance records for a teacher's subjects"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT a.id, a.subject_id, a.student_id, a.attendance_date, a.status, s.subject_name
+        FROM attendance a
+        JOIN subjects s ON a.subject_id = s.id
+        WHERE s.teacher_id = ?
+    """, (teacher_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"id": r[0], "subject_id": r[1], "student_id": r[2], "attendance_date": r[3], "status": r[4], "subject_name": r[5]} for r in rows]
