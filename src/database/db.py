@@ -1,166 +1,79 @@
-from src.database.config import supabase
+from src.database.config import supabase, DB_TYPE
 import bcrypt
 
+# ============= Conditional imports based on database type =============
+if DB_TYPE == "sqlite":
+    from src.database.db_sqlite import (
+        hash_pass, check_pass, check_teacher_exists, create_teacher,
+        teacher_login, check_student_exists, create_student, student_login,
+        get_all_students, get_all_subjects
+    )
+else:
+    # ============= Supabase implementations =============
+    def hash_pass(pwd):
+        return bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
 
+    def check_pass(pwd, hashed):
+        return bcrypt.checkpw(pwd.encode(), hashed.encode())
 
-def hash_pass(pwd):
-    return bcrypt.hashpw(pwd.encode(), bcrypt.gensalt()).decode()
+    def check_teacher_exists(username):
+        response = supabase.table("teachers").select("username").eq("username", username).execute()
+        return len(response.data) > 0
 
-def check_pass(pwd, hashed):
-    return bcrypt.checkpw(pwd.encode(), hashed.encode())
+    def create_teacher(username, password, name):
+        data = {"username": username, "password": hash_pass(password), "name": name}
+        response = supabase.table("teachers").insert(data).execute()
+        if response.data:
+            for record in response.data:
+                if 'id' in record:
+                    record['teacher_id'] = record.pop('id')
+        return response.data
 
+    def teacher_login(username, password):
+        response = supabase.table("teachers").select("*").eq("username", username).execute()
+        if response.data:
+            teacher = response.data[0]
+            if check_pass(password, teacher['password']):
+                if 'id' in teacher:
+                    teacher['teacher_id'] = teacher.pop('id')
+                return teacher
+        return None
 
-def check_teacher_exists(username):
-    # Check for unique username, returns false when username is already taken
-    response = supabase.table("teachers").select("username").eq("username", username).execute()
-    return len(response.data) > 0 
+    def check_student_exists(username):
+        response = supabase.table("students").select("username").eq("username", username).execute()
+        return len(response.data) > 0
 
+    def create_student(username, password, name, roll_number=None):
+        data = {"username": username, "password": hash_pass(password), "name": name, "roll_number": roll_number}
+        response = supabase.table("students").insert(data).execute()
+        if response.data:
+            for record in response.data:
+                if 'id' in record:
+                    record['student_id'] = record.pop('id')
+        return response.data
 
+    def student_login(username, password):
+        response = supabase.table("students").select("*").eq("username", username).execute()
+        if response.data:
+            student = response.data[0]
+            if check_pass(password, student['password']):
+                if 'id' in student:
+                    student['student_id'] = student.pop('id')
+                return student
+        return None
 
-def create_teacher(username, password, name):
+    def get_all_students():
+        response = supabase.table("students").select("*").execute()
+        if response.data:
+            for record in response.data:
+                if 'id' in record:
+                    record['student_id'] = record.pop('id')
+        return response.data
 
-    data = { "username" : username, "password": hash_pass(password), "name": name}
-    response = supabase.table("teachers").insert(data).execute()
-    
-    # Rename 'id' to 'teacher_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'id' in record:
-                record['teacher_id'] = record.pop('id')
-    
-    return response.data
-
-
-def teacher_login(username, password):
-    response = supabase.table("teachers").select("*").eq("username", username).execute()
-    if response.data:
-        teacher = response.data[0]
-        if check_pass(password, teacher['password']):
-            # Rename 'id' to 'teacher_id' for consistency
-            if 'id' in teacher:
-                teacher['teacher_id'] = teacher.pop('id')
-            return teacher
-    return None
-
-
-def get_all_students():
-    response = supabase.table('students').select("*").execute()
-    
-    # Rename 'id' to 'student_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'id' in record:
-                record['student_id'] = record.pop('id')
-    
-    return response.data
-
-def create_student(new_name, face_embedding=None, voice_embedding=None):
-    data = {'name': new_name, 'face_embedding':face_embedding, "voice_embedding": voice_embedding}
-    response = supabase.table('students').insert(data).execute()
-    
-    # Rename 'id' to 'student_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'id' in record:
-                record['student_id'] = record.pop('id')
-    
-    return response.data
-
-
-def create_subject(subject_code, name, section, teacher_id):
-    data = {"subject_code": subject_code, "name": name, "section": section, "teacher_id": teacher_id}
-    response = supabase.table("subjects").insert(data).execute()
-    
-    # Rename 'id' to 'subject_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'id' in record:
-                record['subject_id'] = record.pop('id')
-    
-    return response.data
-
-def get_teacher_subjects(teacher_id):
-    response = supabase.table('subjects').select("*, subject_students(count), attendance_logs(timestamp)").eq("teacher_id", teacher_id).execute()
-    subjects = response.data
-
-    for sub in subjects:
-        # Rename 'id' to 'subject_id' for consistency
-        if 'id' in sub:
-            sub['subject_id'] = sub.pop('id')
-        
-        sub['total_students'] = sub.get("subject_students", [{}])[0].get('count', 0) if sub.get('subject_students') else 0
-        attendance = sub.get('attendance_logs', [])
-        unique_sessions = len(set(log['timestamp'] for log in attendance))
-        sub['total_classes'] = unique_sessions
-
-        sub.pop('subject_student', None)
-        sub.pop('attendance_logs', None)
-
-    return subjects
-
-
-def  enroll_student_to_subject(student_id, subject_id):
-    data = {'student_id': student_id, "subject_id": subject_id}
-    response= supabase.table('subject_students').insert(data).execute()
-    return response.data
-
-
-def  unenroll_student_to_subject(student_id, subject_id):
-    response= supabase.table('subject_students').delete().eq('student_id', student_id).eq('subject_id', subject_id).execute()
-    return response.data
-
-
-
-def get_student_subjects(student_id):
-    response = supabase.table('subject_students').select('*, subjects(*)').eq('student_id', student_id).execute()
-    
-    # Rename nested 'id' to 'subject_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'subjects' in record and isinstance(record['subjects'], dict):
-                if 'id' in record['subjects']:
-                    record['subjects']['subject_id'] = record['subjects'].pop('id')
-    
-    return response.data
-
-
-def get_student_attendance(student_id):
-    response = supabase.table('attendance_logs').select('*, subjects(*)').eq('student_id', student_id).execute()
-    
-    # Rename nested 'id' to 'subject_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'subjects' in record and isinstance(record['subjects'], dict):
-                if 'id' in record['subjects']:
-                    record['subjects']['subject_id'] = record['subjects'].pop('id')
-    
-    return response.data
-
-
-def create_attendance(logs):
-    response = supabase.table('attendance_logs').insert(logs).execute()
-    return response.data
-
-def get_attendance_for_teacher(teacher_id):
-    response = supabase.table('attendance_logs').select("*, subjects!inner(*)").eq('subjects.teacher_id', teacher_id).execute()
-    
-    # Rename nested 'id' to 'subject_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'subjects' in record and isinstance(record['subjects'], dict):
-                if 'id' in record['subjects']:
-                    record['subjects']['subject_id'] = record['subjects'].pop('id')
-    
-    return response.data
-
-def get_all_subjects():
-    """Get all subjects in the database"""
-    response = supabase.table('subjects').select("id, subject_code, name, section, teacher_id").execute()
-    
-    # Rename 'id' to 'subject_id' for consistency
-    if response.data:
-        for record in response.data:
-            if 'id' in record:
-                record['subject_id'] = record.pop('id')
-    
-    return response.data
+    def get_all_subjects():
+        response = supabase.table('subjects').select("*").execute()
+        if response.data:
+            for record in response.data:
+                if 'id' in record:
+                    record['subject_id'] = record.pop('id')
+        return response.data
