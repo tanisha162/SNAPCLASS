@@ -266,6 +266,47 @@ def unenroll_student_to_subject(student_id, subject_id):
     conn.close()
     return []
 
+def get_enrolled_students(subject_id):
+    """Get all students enrolled in a subject (same nested shape as the Supabase backend).
+
+    The screens used to query a 'subject_students' table directly through the
+    Supabase client; that table does not exist (enrollments live in the
+    'enrollments' table) and the client is None in local mode, so Run Face
+    Analysis / Voice Attendance crashed every time.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT st.id, st.username, st.name, st.roll_number
+        FROM enrollments en
+        JOIN students st ON en.student_id = st.id
+        WHERE en.subject_id = ?
+    """, (subject_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [{"students": {"student_id": r[0], "username": r[1], "name": r[2], "roll_number": r[3]}} for r in rows]
+
+def is_student_enrolled(student_id, subject_id):
+    """Check whether a student is already enrolled in a subject"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT 1 FROM enrollments WHERE student_id = ? AND subject_id = ?", (student_id, subject_id))
+    result = cursor.fetchone() is not None
+    conn.close()
+    return result
+
+def get_subject_by_code(code):
+    """Find a subject by the code teachers share (join_code / subject_code).
+
+    Returns the same shaped dict as get_teacher_subjects(), or None.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT " + _SUBJECT_COLUMNS + " WHERE s.join_code = ? OR s.subject_code = ?", (code, code))
+    row = cursor.fetchone()
+    conn.close()
+    return _subject_row(row) if row else None
+
 def get_student_subjects(student_id):
     """Get all subjects for a student (same nested shape as the Supabase backend)"""
     conn = sqlite3.connect(DB_PATH)

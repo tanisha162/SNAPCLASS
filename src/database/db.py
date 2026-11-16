@@ -8,7 +8,8 @@ if DB_TYPE == "sqlite":
         teacher_login, check_student_exists, create_student, student_login,
         get_all_students, get_all_subjects, get_teacher_subjects, create_subject,
         enroll_student_to_subject, unenroll_student_to_subject, get_student_subjects,
-        get_student_attendance, create_attendance, get_attendance_for_teacher
+        get_student_attendance, create_attendance, get_attendance_for_teacher,
+        get_enrolled_students, is_student_enrolled, get_subject_by_code
     )
     # The SQLite backend is only usable once its tables exist; nothing else
     # in the app called init_db(), so every local-mode DB call failed with
@@ -140,3 +141,33 @@ else:
                     if 'id' in record['subjects']:
                         record['subjects']['subject_id'] = record['subjects'].pop('id')
         return response.data
+
+    def get_enrolled_students(subject_id):
+        # The attendance screens used to query a 'subject_students' table
+        # directly; that table does not exist (enrollments live in
+        # 'enrollments') and the client is None in local mode, so Run Face
+        # Analysis / Voice Attendance crashed every time.
+        response = supabase.table('enrollments').select('*, students(*)').eq('subject_id', subject_id).execute()
+        if response.data:
+            for record in response.data:
+                if 'students' in record and isinstance(record['students'], dict):
+                    if 'id' in record['students']:
+                        record['students']['student_id'] = record['students'].pop('id')
+        return response.data
+
+    def is_student_enrolled(student_id, subject_id):
+        response = supabase.table('enrollments').select('id').eq('student_id', student_id).eq('subject_id', subject_id).execute()
+        return len(response.data) > 0
+
+    def get_subject_by_code(code):
+        # Teachers share the subject_code (which create_subject also stores
+        # as join_code); match either so a code typed from a share card works.
+        response = supabase.table('subjects').select('*').eq('join_code', code).execute()
+        if not response.data:
+            response = supabase.table('subjects').select('*').eq('subject_code', code).execute()
+        if response.data:
+            subject = response.data[0]
+            if 'id' in subject:
+                subject['subject_id'] = subject.pop('id')
+            return subject
+        return None

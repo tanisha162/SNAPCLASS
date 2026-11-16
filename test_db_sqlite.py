@@ -5,7 +5,10 @@ shapes the Supabase backend returns (teacher_id / student_id / subject_id,
 subject 'name', nested 'subjects' dicts). The SQLite backend used to return
 raw 'id' / 'subject_name' shapes, dropped the 'section' argument, and never
 created its tables, so the teacher/student dashboards crashed with KeyError
-(and confirming attendance failed) in local mode.
+(and confirming attendance failed) in local mode. The attendance and enroll
+flows also queried a 'subject_students' table directly through the Supabase
+client; that table does not exist (enrollments live in 'enrollments') and the
+client is None in local mode, so Run Face Analysis and enrolling crashed too.
 
 Run:  python -m unittest test_db_sqlite -v
 Requires: bcrypt (in requirements.txt).
@@ -120,6 +123,51 @@ class TestSqliteBackendShapes(unittest.TestCase):
         self.assertEqual(len(subjects), 1)
         self.assertEqual(subjects[0]["name"], "Intro to CS")
         self.assertEqual(subjects[0]["section"], "A")
+
+    def test_get_enrolled_students_nested_shape(self):
+        # teacher_screen.py (Take Attendance) and dialog_voice_attendance.py
+        # used to query a 'subject_students' table directly through the
+        # Supabase client; that table does not exist (enrollments live in
+        # 'enrollments') and the client is None in local mode, so Run Face
+        # Analysis crashed with AttributeError every time.
+        db.create_student("s2", "pw123456", "Meera", "R02")
+        student2 = db.student_login("s2", "pw123456")
+        db.enroll_student_to_subject(
+            self.student["student_id"], self.subject["subject_id"])
+        db.enroll_student_to_subject(
+            student2["student_id"], self.subject["subject_id"])
+        nodes = db.get_enrolled_students(self.subject["subject_id"])
+        self.assertEqual(len(nodes), 2)
+        by_id = {n["students"]["student_id"]: n["students"] for n in nodes}
+        self.assertEqual(by_id[self.student["student_id"]]["name"], "Hamza")
+        self.assertEqual(by_id[student2["student_id"]]["name"], "Meera")
+        # A subject with no enrollments returns [] (not a crash).
+        db.create_subject("CS102", "Data Structures", "B",
+                          self.teacher["teacher_id"])
+        empty = db.get_teacher_subjects(self.teacher["teacher_id"])
+        empty_id = [s for s in empty
+                    if s["subject_code"] == "CS102"][0]["subject_id"]
+        self.assertEqual(db.get_enrolled_students(empty_id), [])
+
+    def test_is_student_enrolled(self):
+        # dialog_enroll.py / dialog_auto_enroll.py used the same broken
+        # 'subject_students' query for their already-enrolled check.
+        self.assertFalse(db.is_student_enrolled(
+            self.student["student_id"], self.subject["subject_id"]))
+        db.enroll_student_to_subject(
+            self.student["student_id"], self.subject["subject_id"])
+        self.assertTrue(db.is_student_enrolled(
+            self.student["student_id"], self.subject["subject_id"]))
+
+    def test_get_subject_by_code(self):
+        # The enroll dialogs used to look subjects up through the Supabase
+        # client directly (and one selected a non-existent 'subject_id'
+        # column), so enrolling crashed in local mode.
+        subject = db.get_subject_by_code("CS101")
+        self.assertIsNotNone(subject)
+        self.assertEqual(subject["subject_id"], self.subject["subject_id"])
+        self.assertEqual(subject["name"], "Intro to CS")
+        self.assertIsNone(db.get_subject_by_code("NOPE404"))
 
 
 if __name__ == "__main__":
