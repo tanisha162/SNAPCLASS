@@ -14,7 +14,7 @@ def init_db():
     """Initialize SQLite database with required tables"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     # Create teachers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS teachers (
@@ -25,7 +25,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
+
     # Create students table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS students (
@@ -37,7 +37,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
+
     # Create subjects table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS subjects (
@@ -46,11 +46,12 @@ def init_db():
             subject_name TEXT NOT NULL,
             subject_code TEXT UNIQUE,
             join_code TEXT UNIQUE NOT NULL,
+            section TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (teacher_id) REFERENCES teachers(id)
         )
     ''')
-    
+
     # Create attendance table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS attendance (
@@ -64,7 +65,7 @@ def init_db():
             FOREIGN KEY (student_id) REFERENCES students(id)
         )
     ''')
-    
+
     # Create enrollments table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS enrollments (
@@ -77,9 +78,36 @@ def init_db():
             FOREIGN KEY (subject_id) REFERENCES subjects(id)
         )
     ''')
-    
+
     conn.commit()
+
+    # Migrate pre-existing databases created before `section` was added.
+    columns = [row[1] for row in cursor.execute("PRAGMA table_info(subjects)")]
+    if "section" not in columns:
+        cursor.execute("ALTER TABLE subjects ADD COLUMN section TEXT")
+        conn.commit()
+
     conn.close()
+
+def _subject_row(row):
+    """Shape a subject row the way the screens (and the Supabase backend) expect."""
+    return {
+        "subject_id": row[0],
+        "teacher_id": row[1],
+        "name": row[2],
+        "subject_code": row[3],
+        "join_code": row[4],
+        "section": row[5],
+        "total_students": row[6],
+        "total_classes": row[7],
+    }
+
+_SUBJECT_COLUMNS = """
+    s.id, s.teacher_id, s.subject_name, s.subject_code, s.join_code, s.section,
+    (SELECT COUNT(*) FROM enrollments e WHERE e.subject_id = s.id) AS total_students,
+    (SELECT COUNT(DISTINCT a.attendance_date) FROM attendance a WHERE a.subject_id = s.id) AS total_classes
+    FROM subjects s
+"""
 
 def hash_pass(pwd):
     """Hash password"""
@@ -110,7 +138,7 @@ def create_teacher(username, password, name):
         conn.commit()
         teacher_id = cursor.lastrowid
         conn.close()
-        return [{"id": teacher_id, "username": username, "name": name}]
+        return [{"teacher_id": teacher_id, "username": username, "name": name}]
     except sqlite3.IntegrityError:
         conn.close()
         return []
@@ -122,11 +150,11 @@ def teacher_login(username, password):
     cursor.execute("SELECT id, username, password, name FROM teachers WHERE username = ?", (username,))
     result = cursor.fetchone()
     conn.close()
-    
+
     if result:
         teacher_id, user, pwd_hash, name = result
         if check_pass(password, pwd_hash):
-            return {"id": teacher_id, "username": user, "name": name}
+            return {"teacher_id": teacher_id, "username": user, "name": name}
     return None
 
 def check_student_exists(username):
@@ -150,7 +178,7 @@ def create_student(username, password, name, roll_number=None):
         conn.commit()
         student_id = cursor.lastrowid
         conn.close()
-        return [{"id": student_id, "username": username, "name": name}]
+        return [{"student_id": student_id, "username": username, "name": name}]
     except sqlite3.IntegrityError:
         conn.close()
         return []
@@ -162,11 +190,11 @@ def student_login(username, password):
     cursor.execute("SELECT id, username, password, name FROM students WHERE username = ?", (username,))
     result = cursor.fetchone()
     conn.close()
-    
+
     if result:
         student_id, user, pwd_hash, name = result
         if check_pass(password, pwd_hash):
-            return {"id": student_id, "username": user, "name": name}
+            return {"student_id": student_id, "username": user, "name": name}
     return None
 
 def get_all_students():
@@ -176,37 +204,25 @@ def get_all_students():
     cursor.execute("SELECT id, username, name, roll_number FROM students")
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "username": r[1], "name": r[2], "roll_number": r[3]} for r in rows]
-
-def get_all_subjects(teacher_id):
-    """Get all subjects for a teacher"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, teacher_id, subject_name, subject_code, join_code FROM subjects WHERE teacher_id = ?",
-        (teacher_id,)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+    return [{"student_id": r[0], "username": r[1], "name": r[2], "roll_number": r[3]} for r in rows]
 
 def get_all_subjects():
     """Get all subjects in the database"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, teacher_id, subject_name, subject_code, join_code FROM subjects")
+    cursor.execute("SELECT " + _SUBJECT_COLUMNS)
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+    return [_subject_row(r) for r in rows]
 
 def get_teacher_subjects(teacher_id):
     """Get all subjects for a teacher"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, teacher_id, subject_name, subject_code, join_code FROM subjects WHERE teacher_id = ?", (teacher_id,))
+    cursor.execute("SELECT " + _SUBJECT_COLUMNS + " WHERE s.teacher_id = ?", (teacher_id,))
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+    return [_subject_row(r) for r in rows]
 
 def create_subject(subject_code, name, section, teacher_id):
     """Create new subject"""
@@ -214,13 +230,13 @@ def create_subject(subject_code, name, section, teacher_id):
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO subjects (teacher_id, subject_name, subject_code, join_code) VALUES (?, ?, ?, ?)",
-            (teacher_id, name, subject_code, subject_code)
+            "INSERT INTO subjects (teacher_id, subject_name, subject_code, join_code, section) VALUES (?, ?, ?, ?, ?)",
+            (teacher_id, name, subject_code, subject_code, section)
         )
         conn.commit()
         subject_id = cursor.lastrowid
         conn.close()
-        return [{"id": subject_id, "subject_code": subject_code, "name": name}]
+        return [{"subject_id": subject_id, "subject_code": subject_code, "name": name, "section": section}]
     except sqlite3.IntegrityError:
         conn.close()
         return []
@@ -251,18 +267,20 @@ def unenroll_student_to_subject(student_id, subject_id):
     return []
 
 def get_student_subjects(student_id):
-    """Get all subjects for a student"""
+    """Get all subjects for a student (same nested shape as the Supabase backend)"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT s.id, s.teacher_id, s.subject_name, s.subject_code, s.join_code
-        FROM enrollments e
-        JOIN subjects s ON e.subject_id = s.id
-        WHERE e.student_id = ?
+        SELECT s.id, s.teacher_id, s.subject_name, s.subject_code, s.join_code, s.section,
+        (SELECT COUNT(*) FROM enrollments e WHERE e.subject_id = s.id) AS total_students,
+        (SELECT COUNT(DISTINCT a.attendance_date) FROM attendance a WHERE a.subject_id = s.id) AS total_classes
+        FROM enrollments en
+        JOIN subjects s ON en.subject_id = s.id
+        WHERE en.student_id = ?
     """, (student_id,))
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "teacher_id": r[1], "subject_name": r[2], "subject_code": r[3], "join_code": r[4]} for r in rows]
+    return [{"subjects": _subject_row(r)} for r in rows]
 
 def get_student_attendance(student_id):
     """Get attendance records for a student"""
@@ -279,28 +297,48 @@ def get_student_attendance(student_id):
     return [{"id": r[0], "subject_id": r[1], "attendance_date": r[2], "status": r[3], "subject_name": r[4]} for r in rows]
 
 def create_attendance(logs):
-    """Create attendance records"""
+    """Create attendance records.
+
+    Accepts the 'timestamp' key the teacher flow sends (ISO datetime) as
+    well as 'attendance_date'.
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     for log in logs:
+        attendance_date = log.get("attendance_date") or log.get("timestamp")
+        if attendance_date and "T" in str(attendance_date):
+            attendance_date = str(attendance_date).split("T")[0]
         cursor.execute(
             "INSERT INTO attendance (subject_id, student_id, attendance_date, status) VALUES (?, ?, ?, ?)",
-            (log.get("subject_id"), log.get("student_id"), log.get("attendance_date"), log.get("status", "present"))
+            (log.get("subject_id"), log.get("student_id"), attendance_date, log.get("status", "present"))
         )
     conn.commit()
     conn.close()
     return logs
 
 def get_attendance_for_teacher(teacher_id):
-    """Get all attendance records for a teacher's subjects"""
+    """Get all attendance records for a teacher's subjects.
+
+    Same shape as the Supabase backend: nested 'subjects' dict plus a
+    'timestamp' so the Attendance Records tab can group by session.
+    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT a.id, a.subject_id, a.student_id, a.attendance_date, a.status, s.subject_name
+        SELECT a.id, a.subject_id, a.student_id, a.attendance_date, a.status,
+               a.created_at, s.subject_name, s.subject_code
         FROM attendance a
         JOIN subjects s ON a.subject_id = s.id
         WHERE s.teacher_id = ?
     """, (teacher_id,))
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "subject_id": r[1], "student_id": r[2], "attendance_date": r[3], "status": r[4], "subject_name": r[5]} for r in rows]
+    return [{
+        "id": r[0],
+        "subject_id": r[1],
+        "student_id": r[2],
+        "attendance_date": r[3],
+        "status": r[4],
+        "timestamp": r[5],
+        "subjects": {"subject_id": r[1], "name": r[6], "subject_code": r[7]},
+    } for r in rows]

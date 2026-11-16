@@ -4,12 +4,16 @@ import bcrypt
 # ============= Conditional imports based on database type =============
 if DB_TYPE == "sqlite":
     from src.database.db_sqlite import (
-        hash_pass, check_pass, check_teacher_exists, create_teacher,
+        init_db, hash_pass, check_pass, check_teacher_exists, create_teacher,
         teacher_login, check_student_exists, create_student, student_login,
         get_all_students, get_all_subjects, get_teacher_subjects, create_subject,
         enroll_student_to_subject, unenroll_student_to_subject, get_student_subjects,
         get_student_attendance, create_attendance, get_attendance_for_teacher
     )
+    # The SQLite backend is only usable once its tables exist; nothing else
+    # in the app called init_db(), so every local-mode DB call failed with
+    # "no such table". Create them when this backend is selected.
+    init_db()
 else:
     # ============= Supabase implementations =============
     def hash_pass(pwd):
