@@ -42,6 +42,10 @@ class TestSqliteBackendShapes(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+        # setUp points db.DB_PATH at the temp dir; restore the module
+        # default so a later import of src.database.db (which runs
+        # init_db() at import time) does not point at the deleted dir.
+        db.DB_PATH = Path(db.__file__).parent / "snapclass.db"
 
     def test_teacher_login_returns_teacher_id(self):
         # teacher_screen.py reads teacher_data['teacher_id']
@@ -203,24 +207,31 @@ class TestSqliteBackendShapes(unittest.TestCase):
         import sqlite3
         legacy_dir = tempfile.TemporaryDirectory()
         self.addCleanup(legacy_dir.cleanup)
-        db.DB_PATH = Path(legacy_dir.name) / "snapclass.db"
-        conn = sqlite3.connect(db.DB_PATH)
-        conn.execute('''CREATE TABLE students (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            name TEXT NOT NULL,
-            roll_number TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )''')
-        conn.commit()
-        conn.close()
-        db.init_db()
-        created = db.create_student(
-            "Legacy Student", face_embedding=[0.2] * 128)
-        self.assertEqual(len(created), 1)
-        self.assertEqual(
-            db.get_all_students()[0]["face_embedding"], [0.2] * 128)
+        try:
+            db.DB_PATH = Path(legacy_dir.name) / "snapclass.db"
+            conn = sqlite3.connect(db.DB_PATH)
+            conn.execute('''CREATE TABLE students (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                name TEXT NOT NULL,
+                roll_number TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )''')
+            conn.commit()
+            conn.close()
+            db.init_db()
+            created = db.create_student(
+                "Legacy Student", face_embedding=[0.2] * 128)
+            self.assertEqual(len(created), 1)
+            self.assertEqual(
+                db.get_all_students()[0]["face_embedding"], [0.2] * 128)
+        finally:
+            # Restore the module-default DB path: the setUp temp dir is
+            # deleted by tearDown, so restoring to it would leave later
+            # imports of src.database.db (which runs init_db() at import
+            # time) pointing at a deleted directory.
+            db.DB_PATH = Path(db.__file__).parent / "snapclass.db"
 
 
 if __name__ == "__main__":
