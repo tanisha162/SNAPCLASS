@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS students (
   password TEXT NOT NULL,
   name TEXT NOT NULL,
   roll_number TEXT,
+  face_embedding TEXT,
+  voice_embedding TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

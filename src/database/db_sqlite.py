@@ -2,6 +2,8 @@
 SQLite Database Implementation for Local Testing
 Use this when Supabase is not available
 """
+import json
+import secrets
 import sqlite3
 import os
 from pathlib import Path
@@ -34,6 +36,8 @@ def init_db():
             password TEXT NOT NULL,
             name TEXT NOT NULL,
             roll_number TEXT,
+            face_embedding TEXT,
+            voice_embedding TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -87,7 +91,26 @@ def init_db():
         cursor.execute("ALTER TABLE subjects ADD COLUMN section TEXT")
         conn.commit()
 
+    # Migrate pre-existing databases created before the face/voice
+    # embeddings were stored: without these columns create_student() could
+    # not persist the embeddings the FaceID registration flow captures.
+    student_columns = [row[1] for row in cursor.execute("PRAGMA table_info(students)")]
+    for column in ("face_embedding", "voice_embedding"):
+        if column not in student_columns:
+            cursor.execute(f"ALTER TABLE students ADD COLUMN {column} TEXT")
+            conn.commit()
+
     conn.close()
+
+
+def _parse_embedding(value):
+    """Embeddings are stored as JSON text; hand them back as lists."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
 
 def _subject_row(row):
     """Shape a subject row the way the screens (and the Supabase backend) expect."""
@@ -166,14 +189,32 @@ def check_student_exists(username):
     conn.close()
     return result
 
-def create_student(username, password, name, roll_number=None):
-    """Create new student"""
+def create_student(username, password=None, name=None, roll_number=None,
+                   face_embedding=None, voice_embedding=None):
+    """Create new student.
+
+    FaceID registration (student_screen.py) has no password: it calls
+    create_student(name, face_embedding=..., voice_embedding=...), so the
+    password is optional here and a random hash nobody knows is stored
+    instead, keeping password login impossible for a face-only account.
+    Embeddings are stored as JSON so get_all_students() can hand them back
+    to the face/voice pipelines as lists.
+    """
+    if name is None:
+        name = username
+    if password is None:
+        password_hash = bcrypt.hashpw(
+            secrets.token_bytes(32), bcrypt.gensalt()).decode()
+    else:
+        password_hash = hash_pass(password)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO students (username, password, name, roll_number) VALUES (?, ?, ?, ?)",
-            (username, hash_pass(password), name, roll_number)
+            "INSERT INTO students (username, password, name, roll_number, face_embedding, voice_embedding) VALUES (?, ?, ?, ?, ?, ?)",
+            (username, password_hash, name, roll_number,
+             json.dumps(face_embedding) if face_embedding is not None else None,
+             json.dumps(voice_embedding) if voice_embedding is not None else None)
         )
         conn.commit()
         student_id = cursor.lastrowid
@@ -201,10 +242,12 @@ def get_all_students():
     """Get all students"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, username, name, roll_number FROM students")
+    cursor.execute("SELECT id, username, name, roll_number, face_embedding, voice_embedding FROM students")
     rows = cursor.fetchall()
     conn.close()
-    return [{"student_id": r[0], "username": r[1], "name": r[2], "roll_number": r[3]} for r in rows]
+    return [{"student_id": r[0], "username": r[1], "name": r[2], "roll_number": r[3],
+             "face_embedding": _parse_embedding(r[4]),
+             "voice_embedding": _parse_embedding(r[5])} for r in rows]
 
 def get_all_subjects():
     """Get all subjects in the database"""
@@ -277,14 +320,17 @@ def get_enrolled_students(subject_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT st.id, st.username, st.name, st.roll_number
+        SELECT st.id, st.username, st.name, st.roll_number,
+               st.face_embedding, st.voice_embedding
         FROM enrollments en
         JOIN students st ON en.student_id = st.id
         WHERE en.subject_id = ?
     """, (subject_id,))
     rows = cursor.fetchall()
     conn.close()
-    return [{"students": {"student_id": r[0], "username": r[1], "name": r[2], "roll_number": r[3]}} for r in rows]
+    return [{"students": {"student_id": r[0], "username": r[1], "name": r[2], "roll_number": r[3],
+                          "face_embedding": _parse_embedding(r[4]),
+                          "voice_embedding": _parse_embedding(r[5])}} for r in rows]
 
 def is_student_enrolled(student_id, subject_id):
     """Check whether a student is already enrolled in a subject"""

@@ -9,6 +9,10 @@ created its tables, so the teacher/student dashboards crashed with KeyError
 flows also queried a 'subject_students' table directly through the Supabase
 client; that table does not exist (enrollments live in 'enrollments') and the
 client is None in local mode, so Run Face Analysis and enrolling crashed too.
+FaceID registration also crashed: student_screen.py calls
+create_student(name, face_embedding=..., voice_embedding=...), but the
+backends only accepted (username, password, name, roll_number) and stored
+no embedding anywhere, so a new student could never be recognised.
 
 Run:  python -m unittest test_db_sqlite -v
 Requires: bcrypt (in requirements.txt).
@@ -168,6 +172,55 @@ class TestSqliteBackendShapes(unittest.TestCase):
         self.assertEqual(subject["subject_id"], self.subject["subject_id"])
         self.assertEqual(subject["name"], "Intro to CS")
         self.assertIsNone(db.get_subject_by_code("NOPE404"))
+
+    def test_face_registration_call_shape(self):
+        # student_screen.py registers a new student with exactly this call:
+        # create_student(new_name, face_embedding=face_emb,
+        # voice_embedding=voice_emb). create_student() used to take only
+        # (username, password, name, roll_number), so registration crashed
+        # with TypeError every time and no embedding was ever stored, which
+        # also meant the face pipeline could never recognise the student.
+        embedding = [0.1] * 128
+        created = db.create_student(
+            "Aarav Sharma", face_embedding=embedding, voice_embedding=None)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0]["name"], "Aarav Sharma")
+        students = db.get_all_students()
+        registered = next(
+            s for s in students if s["student_id"] == created[0]["student_id"])
+        # face_pipeline.get_trained_model() reads student['face_embedding']
+        # and feeds it to np.array(); it must come back as a list.
+        self.assertEqual(registered["face_embedding"], embedding)
+        self.assertIsNone(registered["voice_embedding"])
+        # A face-only account has a random password nobody knows, so
+        # password login must fail for it.
+        self.assertIsNone(db.student_login("Aarav Sharma", "password"))
+        self.assertIsNone(db.student_login("Aarav Sharma", ""))
+
+    def test_embedding_columns_migrated_for_legacy_db(self):
+        # Databases created before the embedding columns existed must gain
+        # them on init_db() instead of failing the registration insert.
+        import sqlite3
+        legacy_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(legacy_dir.cleanup)
+        db.DB_PATH = Path(legacy_dir.name) / "snapclass.db"
+        conn = sqlite3.connect(db.DB_PATH)
+        conn.execute('''CREATE TABLE students (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            name TEXT NOT NULL,
+            roll_number TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )''')
+        conn.commit()
+        conn.close()
+        db.init_db()
+        created = db.create_student(
+            "Legacy Student", face_embedding=[0.2] * 128)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(
+            db.get_all_students()[0]["face_embedding"], [0.2] * 128)
 
 
 if __name__ == "__main__":

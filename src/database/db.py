@@ -1,3 +1,6 @@
+import json
+import secrets
+
 from src.database.config import supabase, DB_TYPE
 import bcrypt
 
@@ -50,8 +53,25 @@ else:
         response = supabase.table("students").select("username").eq("username", username).execute()
         return len(response.data) > 0
 
-    def create_student(username, password, name, roll_number=None):
-        data = {"username": username, "password": hash_pass(password), "name": name, "roll_number": roll_number}
+    def create_student(username, password=None, name=None, roll_number=None,
+                       face_embedding=None, voice_embedding=None):
+        # FaceID registration (student_screen.py) has no password: it calls
+        # create_student(name, face_embedding=..., voice_embedding=...).
+        # A random hash nobody knows keeps password login impossible for a
+        # face-only account; embeddings are stored as JSON text.
+        if name is None:
+            name = username
+        if password is None:
+            password_hash = bcrypt.hashpw(
+                secrets.token_bytes(32), bcrypt.gensalt()).decode()
+        else:
+            password_hash = hash_pass(password)
+        data = {"username": username, "password": password_hash, "name": name,
+                "roll_number": roll_number}
+        if face_embedding is not None:
+            data["face_embedding"] = json.dumps(face_embedding)
+        if voice_embedding is not None:
+            data["voice_embedding"] = json.dumps(voice_embedding)
         response = supabase.table("students").insert(data).execute()
         if response.data:
             for record in response.data:
@@ -75,6 +95,14 @@ else:
             for record in response.data:
                 if 'id' in record:
                     record['student_id'] = record.pop('id')
+                # Embeddings are stored as JSON text; the face pipeline
+                # expects lists (a jsonb column already returns lists).
+                for key in ("face_embedding", "voice_embedding"):
+                    if isinstance(record.get(key), str):
+                        try:
+                            record[key] = json.loads(record[key])
+                        except ValueError:
+                            pass
         return response.data
 
     def get_all_subjects():
@@ -153,6 +181,13 @@ else:
                 if 'students' in record and isinstance(record['students'], dict):
                     if 'id' in record['students']:
                         record['students']['student_id'] = record['students'].pop('id')
+                    # dialog_voice_attendance.py reads voice_embedding here.
+                    for key in ("face_embedding", "voice_embedding"):
+                        if isinstance(record['students'].get(key), str):
+                            try:
+                                record['students'][key] = json.loads(record['students'][key])
+                            except ValueError:
+                                pass
         return response.data
 
     def is_student_enrolled(student_id, subject_id):
