@@ -158,9 +158,29 @@ else:
         return response.data
     
     def create_attendance(logs):
-        response = supabase.table('attendance').insert(logs).execute()
+        # The teacher/voice flows send a 'timestamp' key (ISO datetime),
+        # but the attendance table has no 'timestamp' column - it has
+        # attendance_date / status / created_at (see database_schema.sql).
+        # PostgREST rejects inserts carrying an unknown column, so passing
+        # the logs through verbatim made 'Confirm & Save' fail every time
+        # in Supabase mode. Normalise to the real columns, mirroring the
+        # SQLite backend.
+        rows = []
+        for log in logs:
+            attendance_date = log.get("attendance_date") or log.get("timestamp")
+            if attendance_date and "T" in str(attendance_date):
+                attendance_date = str(attendance_date).split("T")[0]
+            rows.append({
+                "subject_id": log.get("subject_id"),
+                "student_id": log.get("student_id"),
+                "attendance_date": attendance_date,
+                "status": log.get("status", "present"),
+            })
+        if not rows:
+            return []
+        response = supabase.table('attendance').insert(rows).execute()
         return response.data
-    
+
     def get_attendance_for_teacher(teacher_id):
         response = supabase.table('attendance').select("*, subjects!inner(*)").eq('subjects.teacher_id', teacher_id).execute()
         if response.data:
@@ -168,6 +188,10 @@ else:
                 if 'subjects' in record and isinstance(record['subjects'], dict):
                     if 'id' in record['subjects']:
                         record['subjects']['subject_id'] = record['subjects'].pop('id')
+                # teacher_tab_attendance_records groups and displays by a
+                # 'timestamp' key; the table only has created_at, so expose
+                # it under that name (as the SQLite backend does).
+                record['timestamp'] = record.get('created_at')
         return response.data
 
     def get_enrolled_students(subject_id):
