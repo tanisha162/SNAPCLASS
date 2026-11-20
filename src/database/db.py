@@ -105,29 +105,70 @@ else:
                             pass
         return response.data
 
+    def _shape_subject(record, total_students=None, total_classes=None):
+        """Shape a subjects row (top-level or embedded subjects(*) dict)
+        the way the screens expect - the same shape the SQLite backend
+        returns: 'name' from subject_name, plus 'section' and the
+        enrolment/class totals the teacher screens read.
+
+        The subjects table (database_schema.sql) has no 'section' column,
+        so reads carry None there unless the row already has one.
+        """
+        if "id" in record:
+            record["subject_id"] = record.pop("id")
+        if "subject_name" in record:
+            record["name"] = record.pop("subject_name")
+        record.setdefault("section", None)
+        if total_students is not None:
+            record["total_students"] = total_students
+        if total_classes is not None:
+            record["total_classes"] = total_classes
+        return record
+
+    def _subject_totals(subject_id):
+        """Enrolment / class totals for one subject, matching the SQLite
+        backend: total_students counts enrollments, total_classes counts
+        distinct attendance dates."""
+        enrolled = supabase.table("enrollments").select(
+            "id", count="exact").eq("subject_id", subject_id).execute()
+        classes = supabase.table("attendance").select(
+            "attendance_date").eq("subject_id", subject_id).execute()
+        total_classes = len({row.get("attendance_date")
+                             for row in (classes.data or [])})
+        return (enrolled.count or 0), total_classes
+
     def get_all_subjects():
         response = supabase.table('subjects').select("*").execute()
         if response.data:
             for record in response.data:
-                if 'id' in record:
-                    record['subject_id'] = record.pop('id')
+                total_students, total_classes = _subject_totals(
+                    record.get("id"))
+                _shape_subject(record, total_students, total_classes)
         return response.data
-    
+
     def get_teacher_subjects(teacher_id):
         response = supabase.table('subjects').select("*").eq('teacher_id', teacher_id).execute()
         if response.data:
             for record in response.data:
-                if 'id' in record:
-                    record['subject_id'] = record.pop('id')
+                total_students, total_classes = _subject_totals(
+                    record.get("id"))
+                _shape_subject(record, total_students, total_classes)
         return response.data
-    
+
     def create_subject(subject_code, name, section, teacher_id):
-        data = {"subject_code": subject_code, "name": name, "section": section, "teacher_id": teacher_id, "join_code": subject_code}
+        # The subjects table (database_schema.sql) has subject_name, not
+        # 'name', and no 'section' column - PostgREST rejects inserts
+        # carrying unknown columns, so sending 'name'/'section' made
+        # 'Create Subject' fail every time in Supabase mode. Insert only
+        # real columns; the section the teacher typed is returned on the
+        # created record (it is not persisted in Supabase mode).
+        data = {"subject_code": subject_code, "subject_name": name,
+                "teacher_id": teacher_id, "join_code": subject_code}
         response = supabase.table("subjects").insert(data).execute()
         if response.data:
             for record in response.data:
-                if 'id' in record:
-                    record['subject_id'] = record.pop('id')
+                _shape_subject(record, total_students=0, total_classes=0)
+                record["section"] = section
         return response.data
     
     def enroll_student_to_subject(student_id, subject_id):
@@ -144,17 +185,18 @@ else:
         if response.data:
             for record in response.data:
                 if 'subjects' in record and isinstance(record['subjects'], dict):
-                    if 'id' in record['subjects']:
-                        record['subjects']['subject_id'] = record['subjects'].pop('id')
+                    # The student dashboard reads sub['name'] /
+                    # sub['section']; the embedded row carries
+                    # 'subject_name' and no 'section'.
+                    _shape_subject(record['subjects'])
         return response.data
-    
+
     def get_student_attendance(student_id):
         response = supabase.table('attendance').select('*, subjects(*)').eq('student_id', student_id).execute()
         if response.data:
             for record in response.data:
                 if 'subjects' in record and isinstance(record['subjects'], dict):
-                    if 'id' in record['subjects']:
-                        record['subjects']['subject_id'] = record['subjects'].pop('id')
+                    _shape_subject(record['subjects'])
         return response.data
     
     def create_attendance(logs):
@@ -186,8 +228,10 @@ else:
         if response.data:
             for record in response.data:
                 if 'subjects' in record and isinstance(record['subjects'], dict):
-                    if 'id' in record['subjects']:
-                        record['subjects']['subject_id'] = record['subjects'].pop('id')
+                    # The records tab reads r['subjects']['name'] /
+                    # r['subjects']['subject_code']; the embedded row
+                    # carries 'subject_name' and no 'section'.
+                    _shape_subject(record['subjects'])
                 # teacher_tab_attendance_records groups and displays by a
                 # 'timestamp' key; the table only has created_at, so expose
                 # it under that name (as the SQLite backend does).
