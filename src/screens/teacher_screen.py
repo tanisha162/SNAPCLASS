@@ -245,7 +245,15 @@ def teacher_tab_attendance_records():
 
     if not records:
         return
-    
+
+    # 'Total' for a session is every student enrolled in the subject, not
+    # the number of attendance rows: rows only exist for present students,
+    # so counting rows made Total equal Present for every session and a
+    # half-empty class still showed 100% (e.g. "✅ 1 /1 Students" with 2
+    # students enrolled and only 1 present).
+    enrolled_by_subject = {s['subject_id']: s.get('total_students', 0)
+                           for s in get_teacher_subjects(teacher_id)}
+
     data = []
 
     for r in records:
@@ -256,7 +264,8 @@ def teacher_tab_attendance_records():
             "Time": datetime.fromisoformat(ts).strftime("%Y-%m-%d %I:%M %p") if ts else "N'A",
             "Subject": r['subjects']['name'],
             "Subject Code":r['subjects']['subject_code'],
-            "count": 1  # Every record represents one present student
+            "count": 1,  # Every record represents one present student
+            "total_enrolled": enrolled_by_subject.get(r['subject_id'], 0),
         })
 
 
@@ -268,7 +277,7 @@ def teacher_tab_attendance_records():
         df.groupby(['ts_group', 'Time', 'Subject', 'Subject Code'])
         .agg(
             Present_Count = ('count', 'sum'),
-            Total_Count =('count', 'count')
+            Total_Count =('total_enrolled', 'first')
         ).reset_index()
 
     )
