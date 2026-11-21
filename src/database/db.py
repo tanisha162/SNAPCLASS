@@ -270,7 +270,14 @@ else:
             response = supabase.table('subjects').select('*').eq('subject_code', code).execute()
         if response.data:
             subject = response.data[0]
-            if 'id' in subject:
-                subject['subject_id'] = subject.pop('id')
+            # dialog_auto_enroll.py reads subject['name'] for the confirm
+            # prompt; the raw row carries 'subject_name' and no 'section'
+            # or totals, so the share-link Quick Enrollment dialog crashed
+            # with KeyError in Supabase mode (the SQLite backend already
+            # returns the shaped dict). Shape it like the other subject
+            # reads do.
+            total_students, total_classes = _subject_totals(
+                subject.get("id"))
+            _shape_subject(subject, total_students, total_classes)
             return subject
         return None

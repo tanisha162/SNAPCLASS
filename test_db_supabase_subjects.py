@@ -228,6 +228,24 @@ class TestSupabaseSubjects(unittest.TestCase):
         self.assertNotIn("id", sub)
         self.assertNotIn("subject_name", sub)
 
+    def test_get_subject_by_code_shape(self):
+        """dialog_auto_enroll.py (share-link Quick Enrollment) reads
+        subject['name'] and subject['subject_id']; the Supabase backend
+        used to return the raw row ('subject_name', no 'section' or
+        totals), so opening a shared join link crashed with KeyError
+        in Supabase mode while the SQLite backend worked."""
+        subject = self.db.get_subject_by_code("M101")
+        self.assertIsNotNone(subject)
+        self.assertEqual(subject["name"], "Maths")
+        self.assertEqual(subject["subject_code"], "M101")
+        self.assertEqual(subject["subject_id"], 7)
+        self.assertEqual(subject["section"], None)
+        self.assertEqual(subject["total_students"], 2)
+        self.assertEqual(subject["total_classes"], 2)
+        self.assertNotIn("id", subject)
+        self.assertNotIn("subject_name", subject)
+        self.assertIsNone(self.db.get_subject_by_code("NOPE"))
+
     def test_get_attendance_for_teacher_nested_subject_name(self):
         """The records tab reads r['subjects']['name'] and
         r['subjects']['subject_code'] (and groups by r['timestamp'])."""
