@@ -383,6 +383,24 @@ def get_student_attendance(student_id):
     conn.close()
     return [{"id": r[0], "subject_id": r[1], "attendance_date": r[2], "status": r[3], "subject_name": r[4]} for r in rows]
 
+def get_subject_total_classes(subject_id):
+    """Number of classes actually held for a subject (distinct attendance
+    dates with at least one present student).
+
+    The student dashboard must use this for its 'Total' stat: only present
+    students ever get an attendance row, so counting a student's own rows
+    made Total == Attended for every student - a student who missed
+    sessions still showed 100% attendance.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(DISTINCT attendance_date) FROM attendance "
+        "WHERE subject_id = ?", (subject_id,))
+    result = cursor.fetchone()[0]
+    conn.close()
+    return result
+
 def create_attendance(logs):
     """Create attendance records.
 

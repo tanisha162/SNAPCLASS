@@ -12,7 +12,8 @@ if DB_TYPE == "sqlite":
         get_all_students, get_all_subjects, get_teacher_subjects, create_subject,
         enroll_student_to_subject, unenroll_student_to_subject, get_student_subjects,
         get_student_attendance, create_attendance, get_attendance_for_teacher,
-        get_enrolled_students, is_student_enrolled, get_subject_by_code
+        get_enrolled_students, is_student_enrolled, get_subject_by_code,
+        get_subject_total_classes
     )
     # The SQLite backend is only usable once its tables exist; nothing else
     # in the app called init_db(), so every local-mode DB call failed with
@@ -198,6 +199,21 @@ else:
                 if 'subjects' in record and isinstance(record['subjects'], dict):
                     _shape_subject(record['subjects'])
         return response.data
+
+    def get_subject_total_classes(subject_id):
+        """Number of classes actually held for a subject (distinct
+        attendance dates with at least one present student).
+
+        The student dashboard must use this for its 'Total' stat: only
+        present students ever get an attendance row, so counting a
+        student's own rows made Total == Attended for every student - a
+        student who missed sessions still showed 100% attendance.
+        Same distinct-date count _subject_totals() uses for the teacher
+        screens."""
+        classes = supabase.table("attendance").select(
+            "attendance_date").eq("subject_id", subject_id).execute()
+        return len({row.get("attendance_date")
+                    for row in (classes.data or [])})
     
     def create_attendance(logs):
         # The teacher/voice flows send a 'timestamp' key (ISO datetime),

@@ -9,7 +9,7 @@ import numpy as np
 from src.pipelines.face_pipeline import predict_attendance, get_face_embeddings, train_classifier
 # Temporarily disabled due to webrtcvad dependency issues
 # from src.pipelines.voice_pipeline import get_voice_embedding
-from src.database.db import get_all_students, create_student, get_student_subjects, get_student_attendance, unenroll_student_to_subject
+from src.database.db import get_all_students, create_student, get_student_subjects, get_student_attendance, unenroll_student_to_subject, get_subject_total_classes
 import time
 
 from src.components.dialog_enroll import enroll_dialog
@@ -48,13 +48,22 @@ def student_dashboard():
 
     stats_map = {}
 
+    # 'Total' is the number of classes actually held for the subject, not
+    # the student's own rows: only present students ever get an attendance
+    # row, so counting the student's rows made Total == Attended for every
+    # student (a student who missed sessions still showed 100%).
+    for sub_node in subjects:
+        sid = sub_node['subjects']['subject_id']
+        stats_map[sid] = {"total": get_subject_total_classes(sid),
+                          "attended": 0}
+
     for log in logs:
         sid = log['subject_id']
 
         if sid not in stats_map:
-            stats_map[sid] = {"total":0, "attended": 0}
+            stats_map[sid] = {"total": get_subject_total_classes(sid),
+                              "attended": 0}
 
-        stats_map[sid]['total'] +=1
         # Every record in attendance_logs means student was present
         stats_map[sid]['attended'] += 1
 

@@ -246,6 +246,17 @@ class TestSupabaseSubjects(unittest.TestCase):
         self.assertNotIn("subject_name", subject)
         self.assertIsNone(self.db.get_subject_by_code("NOPE"))
 
+    def test_get_subject_total_classes_counts_held_sessions(self):
+        """student_screen.py shows Total / Attended per subject. Only
+        present students ever get an attendance row, so the dashboard
+        used to count the student's own rows for 'Total' too - a student
+        who missed sessions still showed Total == Attended (100%).
+        Total must be the classes actually held for the subject.
+        Fixture: subject 7 has rows on two distinct dates (student 3
+        present on both, student 4 on one), subject 8 has none."""
+        self.assertEqual(self.db.get_subject_total_classes(7), 2)
+        self.assertEqual(self.db.get_subject_total_classes(8), 0)
+
     def test_get_attendance_for_teacher_nested_subject_name(self):
         """The records tab reads r['subjects']['name'] and
         r['subjects']['subject_code'] (and groups by r['timestamp'])."""

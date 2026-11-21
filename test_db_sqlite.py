@@ -177,6 +177,47 @@ class TestSqliteBackendShapes(unittest.TestCase):
         self.assertEqual(subject["name"], "Intro to CS")
         self.assertIsNone(db.get_subject_by_code("NOPE404"))
 
+    def test_subject_total_classes_counts_held_sessions(self):
+        # student_screen.py shows Total / Attended per subject. Only
+        # present students ever get an attendance row, so the dashboard
+        # used to count the student's own rows for 'Total' too - a student
+        # who missed sessions still showed Total == Attended (100%).
+        # Total must be the classes actually held for the subject.
+        db.enroll_student_to_subject(
+            self.student["student_id"], self.subject["subject_id"])
+        db.create_student("s2", "pw123456", "Meera", "R02")
+        student2 = db.student_login("s2", "pw123456")
+        db.enroll_student_to_subject(
+            student2["student_id"], self.subject["subject_id"])
+        sid = self.subject["subject_id"]
+        # 3 sessions; the first student attends 2 of them.
+        for date, present in [("2026-11-16", [self.student, student2]),
+                              ("2026-11-17", [student2]),
+                              ("2026-11-18", [self.student, student2])]:
+            db.create_attendance([{
+                "student_id": st["student_id"], "subject_id": sid,
+                "attendance_date": date, "status": "present",
+            } for st in present])
+        self.assertEqual(db.get_subject_total_classes(sid), 3)
+        # Same date logged for two students counts as one class.
+        self.assertEqual(
+            db.get_teacher_subjects(
+                self.teacher["teacher_id"])[0]["total_classes"], 3)
+        # Dashboard computation (student_screen.py): total from the
+        # subject, attended from the student's own rows.
+        logs = db.get_student_attendance(self.student["student_id"])
+        total = db.get_subject_total_classes(sid)
+        attended = len([log for log in logs
+                        if log["subject_id"] == sid])
+        self.assertEqual((total, attended), (3, 2))
+        # A subject with no sessions held reports 0, not a crash.
+        db.create_subject("CS102", "Data Structures", "B",
+                          self.teacher["teacher_id"])
+        empty_id = [s for s in db.get_teacher_subjects(
+            self.teacher["teacher_id"])
+            if s["subject_code"] == "CS102"][0]["subject_id"]
+        self.assertEqual(db.get_subject_total_classes(empty_id), 0)
+
     def test_face_registration_call_shape(self):
         # student_screen.py registers a new student with exactly this call:
         # create_student(new_name, face_embedding=face_emb,
