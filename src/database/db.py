@@ -224,16 +224,42 @@ else:
         # in Supabase mode. Normalise to the real columns, mirroring the
         # SQLite backend.
         rows = []
+        seen = set()
         for log in logs:
             attendance_date = log.get("attendance_date") or log.get("timestamp")
             if attendance_date and "T" in str(attendance_date):
                 attendance_date = str(attendance_date).split("T")[0]
+            # One row per student per subject per day: re-taking
+            # attendance for the same subject on the same day used to
+            # insert a second row for every present student, so the
+            # student dashboard counted them twice and showed Attended >
+            # Total. Skip rows already logged for that student/subject/date
+            # (and duplicates inside this batch), mirroring the SQLite
+            # backend.
+            key = (log.get("subject_id"), log.get("student_id"),
+                   attendance_date)
+            if key in seen:
+                continue
+            seen.add(key)
             rows.append({
                 "subject_id": log.get("subject_id"),
                 "student_id": log.get("student_id"),
                 "attendance_date": attendance_date,
                 "status": log.get("status", "present"),
             })
+        if not rows:
+            return []
+        existing = set()
+        for subject_id, attendance_date in {
+                (r["subject_id"], r["attendance_date"]) for r in rows}:
+            response = supabase.table("attendance").select(
+                "student_id").eq("subject_id", subject_id).eq(
+                "attendance_date", attendance_date).execute()
+            for row in (response.data or []):
+                existing.add((subject_id, row["student_id"],
+                              attendance_date))
+        rows = [r for r in rows if (r["subject_id"], r["student_id"],
+                                     r["attendance_date"]) not in existing]
         if not rows:
             return []
         response = supabase.table('attendance').insert(rows).execute()

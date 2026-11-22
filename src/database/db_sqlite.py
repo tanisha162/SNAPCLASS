@@ -406,20 +406,34 @@ def create_attendance(logs):
 
     Accepts the 'timestamp' key the teacher flow sends (ISO datetime) as
     well as 'attendance_date'.
+
+    One row per student per subject per day: re-taking attendance for the
+    same subject on the same day (a second photo batch, or a re-run after
+    a mistake) used to insert a second row for every present student, so
+    the student dashboard counted them twice and showed Attended > Total
+    (e.g. "Attended 2 / Total 1"). Rows already logged for that
+    student/subject/date are skipped.
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    inserted = []
     for log in logs:
         attendance_date = log.get("attendance_date") or log.get("timestamp")
         if attendance_date and "T" in str(attendance_date):
             attendance_date = str(attendance_date).split("T")[0]
         cursor.execute(
+            "SELECT 1 FROM attendance WHERE subject_id = ? AND student_id = ? AND attendance_date = ?",
+            (log.get("subject_id"), log.get("student_id"), attendance_date))
+        if cursor.fetchone():
+            continue
+        cursor.execute(
             "INSERT INTO attendance (subject_id, student_id, attendance_date, status) VALUES (?, ?, ?, ?)",
             (log.get("subject_id"), log.get("student_id"), attendance_date, log.get("status", "present"))
         )
+        inserted.append(log)
     conn.commit()
     conn.close()
-    return logs
+    return inserted
 
 def get_attendance_for_teacher(teacher_id):
     """Get all attendance records for a teacher's subjects.

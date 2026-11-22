@@ -57,15 +57,19 @@ def student_dashboard():
         stats_map[sid] = {"total": get_subject_total_classes(sid),
                           "attended": 0}
 
+    # Count distinct dates per subject: a student logged twice for the
+    # same day (a re-taken session) must count as one attended class, not
+    # two - counting rows made Attended exceed Total.
+    attended_dates = {}
     for log in logs:
         sid = log['subject_id']
+        attended_dates.setdefault(sid, set()).add(log['attendance_date'])
 
+    for sid, dates in attended_dates.items():
         if sid not in stats_map:
             stats_map[sid] = {"total": get_subject_total_classes(sid),
                               "attended": 0}
-
-        # Every record in attendance_logs means student was present
-        stats_map[sid]['attended'] += 1
+        stats_map[sid]['attended'] = len(dates)
 
 
     cols = st.columns(2)

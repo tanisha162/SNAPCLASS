@@ -218,6 +218,41 @@ class TestSqliteBackendShapes(unittest.TestCase):
             if s["subject_code"] == "CS102"][0]["subject_id"]
         self.assertEqual(db.get_subject_total_classes(empty_id), 0)
 
+    def test_create_attendance_dedupes_same_day_retake(self):
+        # Re-taking attendance for the same subject on the same day (a
+        # second photo batch, or a re-run after a mistake) used to insert
+        # a second row for every present student, so the student
+        # dashboard counted them twice and showed Attended > Total
+        # ("Attended 2 / Total 1"). One row per student/subject/date.
+        db.enroll_student_to_subject(
+            self.student["student_id"], self.subject["subject_id"])
+        sid = self.subject["subject_id"]
+        log = {"student_id": self.student["student_id"],
+               "subject_id": sid, "status": "present"}
+        # Two sessions on the same day, as the teacher flow sends them
+        # (timestamp key), plus the same row twice in one batch.
+        inserted = db.create_attendance([
+            {**log, "timestamp": "2026-11-22T10:00:00"},
+            {**log, "timestamp": "2026-11-22T14:30:00"},
+            {**log, "timestamp": "2026-11-22T14:30:00"},
+        ])
+        self.assertEqual(len(inserted), 1)
+        logs = db.get_student_attendance(self.student["student_id"])
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(db.get_subject_total_classes(sid), 1)
+        # A genuinely different day still logs a second class.
+        db.create_attendance([{**log, "attendance_date": "2026-11-23"}])
+        logs = db.get_student_attendance(self.student["student_id"])
+        self.assertEqual(len(logs), 2)
+        self.assertEqual(db.get_subject_total_classes(sid), 2)
+        # Dashboard computation (student_screen.py): attended counts
+        # distinct dates, so even pre-existing duplicate rows cannot
+        # push Attended past Total.
+        attended = len({l["attendance_date"] for l in logs
+                        if l["subject_id"] == sid})
+        self.assertEqual(
+            (db.get_subject_total_classes(sid), attended), (2, 2))
+
     def test_face_registration_call_shape(self):
         # student_screen.py registers a new student with exactly this call:
         # create_student(new_name, face_embedding=face_emb,
